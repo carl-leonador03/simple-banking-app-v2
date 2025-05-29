@@ -272,3 +272,5 @@ If Redis is not available, the application will automatically fall back to in-me
 ## License
 
 This project is licensed under the MIT License - see the LICENSE file for details.
+
+# Status Origin
