@@ -2,6 +2,9 @@
 
 A user-friendly and responsive Flask-based banking application designed for deployment on PythonAnywhere. This application allows users to create accounts, perform simulated money transfers between accounts, view transaction history, and securely manage their credentials.
 
+# LINK
+https://moxenel106.pythonanywhere.com/
+
 ## Features
 
 - **User Authentication**
@@ -374,4 +377,7 @@ If Redis is not available, the application will automatically fall back to in-me
 
 This project is licensed under the MIT License - see the LICENSE file for details.
 
-**Developer:** V.J. Ayuban
+**Developer:** 
+Vohn Justin Ayuban
+Carl Cyruz Leonador
+Trixie Kathleen Zaballa
