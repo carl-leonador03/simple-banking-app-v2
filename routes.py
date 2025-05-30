@@ -1,15 +1,17 @@
+# Developer: V.J. Ayuban
 from flask import render_template, redirect, url_for, flash, request, jsonify
 from flask_login import login_user, logout_user, login_required, current_user
 from werkzeug.urls import url_parse
 from app import app, csrf
-from extensions import db, limiter
+from extensions import db, limiter, is_rate_limit_exempt
 from forms import LoginForm, RegistrationForm, TransferForm, ResetPasswordRequestForm, ResetPasswordForm, DepositForm, UserEditForm, ConfirmTransferForm
 from models import User, Transaction
-from itsdangerous import URLSafeTimedSerializer, SignatureExpired
+from itsdangerous import URLSafeTimedSerializer, SignatureExpired, BadSignature
 import os
 from functools import wraps
 import psgc_api
 import datetime
+import logging
 
 # Context processor to provide current year to all templates
 @app.context_processor
@@ -65,6 +67,9 @@ def login():
     if current_user.is_authenticated:
         return redirect(url_for('index'))
     form = LoginForm()
+    if request.method == 'GET':
+        form.username.data = ''
+        form.password.data = ''
     if form.validate_on_submit():
         user = User.query.filter_by(username=form.username.data).first()
         
@@ -138,46 +143,33 @@ def transfer():
     if current_user.status != 'active' and not current_user.is_admin and not current_user.is_manager:
         flash('Your account is awaiting approval from an administrator.')
         return redirect(url_for('index'))
-        
     form = TransferForm()
     if form.validate_on_submit():
-        # Find recipient based on transfer type
         recipient = None
         if form.transfer_type.data == 'username':
             recipient = User.query.filter_by(username=form.recipient_username.data).first()
-        else:  # account
+        else:
             recipient = User.query.filter_by(account_number=form.recipient_account.data).first()
-            
         amount = form.amount.data
-        
-        # Check for self-transfer
-        if recipient and recipient.id == current_user.id:
+        if recipient is None:
+            flash('Recipient not found.')
+            return redirect(url_for('transfer'))
+        if recipient.id == current_user.id:
             flash('You cannot transfer money to yourself.')
             return redirect(url_for('transfer'))
-            
         if current_user.balance < amount:
             flash('Insufficient funds for this transfer.')
             return redirect(url_for('transfer'))
-        
-        # Check if recipient account is active
         if recipient.status != 'active' and not recipient.is_admin and not recipient.is_manager:
             flash('The recipient account is not active.')
             return redirect(url_for('transfer'))
-        
-        # Create confirm transfer form with pre-populated data
         confirm_form = ConfirmTransferForm(
             recipient_username=recipient.username,
             recipient_account=recipient.account_number,
             amount=amount,
             transfer_type=form.transfer_type.data
         )
-        
-        # Show confirmation page before completing transfer
-        return render_template('confirm_transfer.html', 
-                              recipient=recipient,
-                              amount=amount,
-                              form=confirm_form)
-    
+        return render_template('confirm_transfer.html', recipient=recipient, amount=amount, form=confirm_form)
     return render_template('transfer.html', title='Transfer Money', form=form)
 
 @app.route('/execute_transfer', methods=['POST'])
@@ -187,35 +179,33 @@ def execute_transfer():
     if current_user.status != 'active' and not current_user.is_admin and not current_user.is_manager:
         flash('Your account is awaiting approval from an administrator.')
         return redirect(url_for('index'))
-    
     form = ConfirmTransferForm()
     if form.validate_on_submit():
         amount = float(form.amount.data)
-        
-        # Find recipient based on transfer type
         recipient = None
         if form.transfer_type.data == 'username':
             recipient = User.query.filter_by(username=form.recipient_username.data).first()
-        else:  # account
+        else:
             recipient = User.query.filter_by(account_number=form.recipient_account.data).first()
-        
         if recipient is None:
             flash('Recipient not found.')
             return redirect(url_for('transfer'))
-        
-        # Check if recipient account is active
         if recipient.status != 'active' and not recipient.is_admin and not recipient.is_manager:
             flash('The recipient account is not active.')
             return redirect(url_for('transfer'))
-        
-        if current_user.transfer_money(recipient, amount):
-            db.session.commit()
-            flash(f'Successfully transferred ₱{amount:.2f} to {recipient.username}')
-            return redirect(url_for('account'))
-        else:
-            flash('Transfer failed. Please check your balance.')
+        try:
+            if current_user.transfer_money(recipient, amount):
+                db.session.commit()
+                flash(f'Successfully transferred ₱{amount:.2f} to {recipient.username}')
+                return redirect(url_for('account'))
+            else:
+                flash('Transfer failed. Please check your balance.')
+                return redirect(url_for('transfer'))
+        except Exception as e:
+            db.session.rollback()
+            logging.exception('Error during transfer commit:')
+            flash('A database error occurred. Please try again.')
             return redirect(url_for('transfer'))
-    
     return redirect(url_for('transfer'))
 
 @app.route('/reset_password_request', methods=['GET', 'POST'])
@@ -246,16 +236,25 @@ def reset_password(token):
     except SignatureExpired:
         flash('The password reset link has expired.')
         return redirect(url_for('reset_password_request'))
-    except:
+    except BadSignature:
         flash('Invalid reset link')
         return redirect(url_for('reset_password_request'))
-    
+    except Exception as e:
+        logging.exception('Unexpected error during password reset:')
+        flash('An unexpected error occurred.')
+        return redirect(url_for('reset_password_request'))
     form = ResetPasswordForm()
     if form.validate_on_submit():
-        user.set_password(form.password.data)
-        db.session.commit()
-        flash('Your password has been reset.')
-        return redirect(url_for('login'))
+        try:
+            user.set_password(form.password.data)
+            db.session.commit()
+            flash('Your password has been reset.')
+            return redirect(url_for('login'))
+        except Exception as e:
+            db.session.rollback()
+            logging.exception('Error during password reset commit:')
+            flash('A database error occurred. Please try again.')
+            return redirect(url_for('reset_password_request'))
     return render_template('reset_password.html', form=form)
 
 # Admin routes
@@ -327,57 +326,46 @@ def create_account():
 @limiter.limit("30 per hour")
 def admin_deposit():
     form = DepositForm()
-    
-    # Handle account lookup from query parameters (for the lookup button)
     account_details = None
     if request.args.get('account_number'):
         account_number = request.args.get('account_number')
         account_details = User.query.filter_by(account_number=account_number).first()
-    
     if form.validate_on_submit():
         user = User.query.filter_by(account_number=form.account_number.data).first()
         if not user:
             flash('User not found')
             return redirect(url_for('admin_deposit'))
-        
-        # Admin can only deposit to active accounts (or admin/manager accounts)
         if user.status != 'active' and not user.is_admin and not user.is_manager:
             flash('Cannot deposit to inactive account.')
             return redirect(url_for('admin_deposit'))
-        
         amount = form.amount.data
-        
-        # Call deposit method
-        if user.deposit(amount, current_user):
-            db.session.commit()
-            flash(f'Successfully deposited ₱{amount:.2f} to {user.username}')
-            return redirect(url_for('admin_dashboard'))
-        else:
-            flash('Deposit failed.')
+        try:
+            if user.deposit(amount, current_user):
+                db.session.commit()
+                flash(f'Successfully deposited ₱{amount:.2f} to {user.username}')
+                return redirect(url_for('admin_dashboard'))
+            else:
+                flash('Deposit failed.')
+                return redirect(url_for('admin_deposit'))
+        except Exception as e:
+            db.session.rollback()
+            logging.exception('Error during admin deposit commit:')
+            flash('A database error occurred. Please try again.')
             return redirect(url_for('admin_deposit'))
-    
     return render_template('admin/deposit.html', title='Deposit Funds', form=form, account_details=account_details)
 
 @app.route('/admin/edit_user/<int:user_id>', methods=['GET', 'POST'])
 @login_required
 @admin_required
 def edit_user(user_id):
-    from forms import UserEditForm  # Import here to avoid circular imports
-    
+    from forms import UserEditForm
     user = User.query.get_or_404(user_id)
-    
-    # Ensure admin can only edit users they can manage
     if not current_user.can_manage_user(user):
         flash('You do not have permission to edit this user.')
         return redirect(url_for('admin_dashboard'))
-    
     form = UserEditForm(user.email)
-    
-    # Load region choices for dropdown (always needed)
     regions = psgc_api.get_regions()
     form.region_name.choices = [('', '-- Select Region --')] + [(r['code'], r['name']) for r in regions]
-    
-    # Always populate form on both GET and POST to maintain choices
     form.email.data = user.email if form.email.data is None else form.email.data
     form.firstname.data = user.firstname if form.firstname.data is None else form.firstname.data
     form.lastname.data = user.lastname if form.lastname.data is None else form.lastname.data
@@ -385,83 +373,15 @@ def edit_user(user_id):
     form.postal_code.data = user.postal_code if form.postal_code.data is None else form.postal_code.data
     form.phone.data = user.phone if form.phone.data is None else form.phone.data
     form.status.data = user.status if form.status.data is None else form.status.data
-    
-    # CRITICAL: We need to populate the dependent dropdown choices
-    # for both GET and POST requests to avoid validation errors
-    
-    # Load existing region selection
     region_code = user.region_code
     if form.region_name.data:
         region_code = form.region_name.data
-    
-    # If we have a region, load provinces
-    if region_code:
-        provinces = psgc_api.get_provinces(region_code)
-        form.province_name.choices = [('', '-- Select Province --')] + [(p['code'], p['name']) for p in provinces]
-        
-        # Load existing province selection
-        province_code = user.province_code
-        if form.province_name.data:
-            province_code = form.province_name.data
-        
-        # If we have a province, load cities/municipalities
-        if province_code:
-            cities = psgc_api.get_cities(province_code)
-            municipalities = psgc_api.get_municipalities(province_code)
-            city_choices = [('', '-- Select City/Municipality --')]
-            
-            # Add cities
-            for city in cities:
-                city_choices.append((city['code'], f"{city['name']} (City)"))
-            
-            # Add municipalities
-            for municipality in municipalities:
-                city_choices.append((municipality['code'], municipality['name']))
-            
-            form.city_name.choices = city_choices
-            
-            # Load existing city selection
-            city_code = user.city_code
-            if form.city_name.data:
-                city_code = form.city_name.data
-            
-            # If we have a city, load barangays
-            if city_code:
-                barangays = []
-                # Check if it's a city or municipality
-                city_info = psgc_api.get_city_by_code(city_code)
-                if city_info:
-                    barangays = psgc_api.get_barangays(city_code=city_code)
-                else:
-                    barangays = psgc_api.get_barangays(municipality_code=city_code)
-                
-                form.barangay_name.choices = [('', '-- Select Barangay --')] + [(b['code'], b['name']) for b in barangays]
-    else:
-        # If no region selected, provide empty choices for dependent fields
-        form.province_name.choices = [('', '-- Select Province --')]
-        form.city_name.choices = [('', '-- Select City/Municipality --')]
-        form.barangay_name.choices = [('', '-- Select Barangay --')]
-    
-    # Only on GET request, set the selected values
-    if request.method == 'GET':
-        if user.region_code:
-            form.region_code.data = user.region_code
-            form.region_name.data = user.region_code
-            
-        if user.province_code:
-            form.province_code.data = user.province_code
-            form.province_name.data = user.province_code
-            
-        if user.city_code:
-            form.city_code.data = user.city_code
-            form.city_name.data = user.city_code
-            
-        if user.barangay_code:
-            form.barangay_code.data = user.barangay_code
-            form.barangay_name.data = user.barangay_code
-    
+    if form.region_name.data and form.region_name.data != '' and form.region_name.data != user.region_code:
+        region = psgc_api.get_region_by_code(form.region_name.data)
+        region_name = region['name'] if region else form.region_name.data
+        form.region_code.data = form.region_name.data
+        form.region_name.data = region_name
     if form.validate_on_submit():
-        # Track changes to create an audit record
         changes = []
         if user.email != form.email.data:
             changes.append(f"Email: {user.email} → {form.email.data}")
@@ -475,33 +395,25 @@ def edit_user(user_id):
             changes.append(f"Phone: {user.phone or 'None'} → {form.phone.data or 'None'}")
         if user.status != form.status.data:
             changes.append(f"Status: {user.status} → {form.status.data}")
-            
-        # Address fields changes
         if form.region_name.data and form.region_name.data != '' and form.region_name.data != user.region_code:
             region = psgc_api.get_region_by_code(form.region_name.data)
             region_name = region['name'] if region else form.region_name.data
             changes.append(f"Region: {user.region_name or 'None'} → {region_name}")
-            
         if form.province_name.data and form.province_name.data != '' and form.province_name.data != user.province_code:
             province = psgc_api.get_province_by_code(form.province_name.data)
             province_name = province['name'] if province else form.province_name.data
             changes.append(f"Province: {user.province_name or 'None'} → {province_name}")
-            
         if form.city_name.data and form.city_name.data != '' and form.city_name.data != user.city_code:
             city = psgc_api.get_city_by_code(form.city_name.data)
             municipality = None if city else psgc_api.get_municipality_by_code(form.city_name.data)
             city_name = city['name'] if city else (municipality['name'] if municipality else form.city_name.data)
             changes.append(f"City/Municipality: {user.city_name or 'None'} → {city_name}")
-            
         if form.barangay_name.data and form.barangay_name.data != '' and form.barangay_name.data != user.barangay_code:
             barangay = psgc_api.get_barangay_by_code(form.barangay_name.data)
             barangay_name = barangay['name'] if barangay else form.barangay_name.data
             changes.append(f"Barangay: {user.barangay_name or 'None'} → {barangay_name}")
-            
         if user.postal_code != form.postal_code.data:
             changes.append(f"Postal Code: {user.postal_code or 'None'} → {form.postal_code.data or 'None'}")
-        
-        # Update user information
         user.email = form.email.data
         user.firstname = form.firstname.data
         user.lastname = form.lastname.data
@@ -509,67 +421,23 @@ def edit_user(user_id):
         user.postal_code = form.postal_code.data
         user.phone = form.phone.data
         user.status = form.status.data
-        
-        # Update address data with names and codes
-        if form.region_name.data and form.region_name.data != '':
-            user.region_code = form.region_name.data
-            region = psgc_api.get_region_by_code(form.region_name.data)
-            if region:
-                user.region_name = region['name']
-        else:
-            user.region_code = None
-            user.region_name = None
-            
-        if form.province_name.data and form.province_name.data != '':
-            user.province_code = form.province_name.data
-            province = psgc_api.get_province_by_code(form.province_name.data)
-            if province:
-                user.province_name = province['name']
-        else:
-            user.province_code = None
-            user.province_name = None
-            
-        if form.city_name.data and form.city_name.data != '':
-            user.city_code = form.city_name.data
-            # Check if it's a city
-            city = psgc_api.get_city_by_code(form.city_name.data)
-            if city:
-                user.city_name = city['name']
-            else:
-                # Must be a municipality
-                municipality = psgc_api.get_municipality_by_code(form.city_name.data)
-                if municipality:
-                    user.city_name = municipality['name']
-        else:
-            user.city_code = None
-            user.city_name = None
-            
-        if form.barangay_name.data and form.barangay_name.data != '':
-            user.barangay_code = form.barangay_name.data
-            barangay = psgc_api.get_barangay_by_code(form.barangay_name.data)
-            if barangay:
-                user.barangay_name = barangay['name']
-        else:
-            user.barangay_code = None
-            user.barangay_name = None
-        
-        # Create audit record if there were changes
-        if changes:
-            # Create a transaction record for the user edit
-            transaction = Transaction(
-                sender_id=current_user.id,  # Admin making the change
-                receiver_id=user.id,        # User being modified
-                amount=None,                # No money involved
-                transaction_type='user_edit',
-                details="\n".join(changes),
-                timestamp=datetime.datetime.utcnow()
-            )
-            db.session.add(transaction)
-        
-        db.session.commit()
-        flash(f'User information for {user.username} has been updated.')
-        return redirect(url_for('admin_dashboard'))
-    
+        user.region_code = form.region_code.data
+        user.region_name = form.region_name.data
+        user.province_code = form.province_code.data
+        user.province_name = form.province_name.data
+        user.city_code = form.city_code.data
+        user.city_name = form.city_name.data
+        user.barangay_code = form.barangay_code.data
+        user.barangay_name = form.barangay_name.data
+        try:
+            db.session.commit()
+            flash(f'User information for {user.username} has been updated.')
+            return redirect(url_for('admin_dashboard'))
+        except Exception as e:
+            db.session.rollback()
+            logging.exception('Error during user edit commit:')
+            flash('A database error occurred. Please try again.')
+            return redirect(url_for('admin_dashboard'))
     return render_template('admin/edit_user.html', title='Edit User', form=form, user=user)
 
 # Apply rate limiting to API endpoints

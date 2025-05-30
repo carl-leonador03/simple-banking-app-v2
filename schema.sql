@@ -34,6 +34,15 @@ CREATE TABLE user (
   is_admin BOOLEAN DEFAULT FALSE,
   is_manager BOOLEAN DEFAULT FALSE,
   date_registered DATETIME DEFAULT CURRENT_TIMESTAMP,
+  last_login DATETIME,
+  failed_login_attempts INT DEFAULT 0,
+  account_locked_until DATETIME,
+  password_reset_token VARCHAR(100),
+  password_reset_expires DATETIME,
+  email_verified BOOLEAN DEFAULT FALSE,
+  email_verification_token VARCHAR(100),
+  two_factor_enabled BOOLEAN DEFAULT FALSE,
+  two_factor_secret VARCHAR(32),
   INDEX idx_username (username),
   INDEX idx_email (email),
   INDEX idx_account_number (account_number)
@@ -47,10 +56,25 @@ CREATE TABLE transaction (
   amount FLOAT NULL,
   timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
   transaction_type VARCHAR(20) DEFAULT 'transfer',
+  status VARCHAR(20) DEFAULT 'pending',
   details TEXT,
+  reference_number VARCHAR(50) UNIQUE,
   FOREIGN KEY (sender_id) REFERENCES user (id),
   FOREIGN KEY (receiver_id) REFERENCES user (id),
   INDEX idx_sender (sender_id),
   INDEX idx_receiver (receiver_id),
+  INDEX idx_timestamp (timestamp)
+) ENGINE=InnoDB;
+
+-- Login History table
+CREATE TABLE login_history (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  user_id INT,
+  timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+  ip_address VARCHAR(45),
+  user_agent VARCHAR(256),
+  success BOOLEAN DEFAULT TRUE,
+  FOREIGN KEY (user_id) REFERENCES user (id),
+  INDEX idx_user_id (user_id),
   INDEX idx_timestamp (timestamp)
 ) ENGINE=InnoDB; 

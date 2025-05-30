@@ -1,3 +1,4 @@
+# Developer: V.J. Ayuban
 import os
 import pymysql
 from dotenv import load_dotenv

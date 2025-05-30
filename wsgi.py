@@ -7,8 +7,8 @@ if path not in sys.path:
     sys.path.append(path)
 
 # Import the app as application
-from app import app as application
+from app import app
 
 # This allows the application to be run directly
-if __name__ == '__main__':
-    application.run() 
+if __name__ == "__main__":
+    app.run(host='0.0.0.0', port=5000) 
