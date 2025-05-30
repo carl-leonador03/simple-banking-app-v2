@@ -1,3 +1,4 @@
+# Developer: V.J. Ayuban
 import requests
 import json
 from functools import lru_cache
@@ -9,42 +10,54 @@ BASE_URL = "https://psgc.gitlab.io/api"
 def get_regions():
     """Get all regions from the PSGC API"""
     url = f"{BASE_URL}/regions"
-    response = requests.get(url)
-    if response.status_code == 200:
-        data = response.json()
-        # Sort by name
-        data.sort(key=lambda x: x['name'])
-        return data
+    try:
+        response = requests.get(url, timeout=5)
+        if response.status_code == 200:
+            data = response.json()
+            # Sort by name
+            data.sort(key=lambda x: x['name'])
+            return data
+    except requests.RequestException:
+        pass
     return []
 
 @lru_cache(maxsize=32)
 def get_provinces(region_code=None):
     """Get provinces from the PSGC API, optionally filtered by region code"""
     url = f"{BASE_URL}/provinces"
-    response = requests.get(url)
-    if response.status_code == 200:
-        data = response.json()
-        # Filter by region if provided
-        if region_code:
-            data = [p for p in data if p.get('regionCode') == region_code]
-        # Sort by name
-        data.sort(key=lambda x: x['name'])
-        return data
+    try:
+        response = requests.get(url, timeout=5)
+        if response.status_code == 200:
+            data = response.json()
+            # Filter by region if provided
+            if region_code:
+                data = [p for p in data if p.get('regionCode') == region_code]
+            # Sort by name
+            data.sort(key=lambda x: x['name'])
+            return data
+    except requests.RequestException:
+        pass
     return []
 
 @lru_cache(maxsize=32)
-def get_cities(province_code=None):
-    """Get cities from the PSGC API, optionally filtered by province code"""
+def get_cities(region_code=None, province_code=None):
+    """Get cities from the PSGC API, optionally filtered by region or province code"""
     url = f"{BASE_URL}/cities"
-    response = requests.get(url)
-    if response.status_code == 200:
-        data = response.json()
-        # Filter by province if provided
-        if province_code:
-            data = [c for c in data if c.get('provinceCode') == province_code]
-        # Sort by name
-        data.sort(key=lambda x: x['name'])
-        return data
+    try:
+        response = requests.get(url, timeout=5)
+        if response.status_code == 200:
+            data = response.json()
+            # Filter by region if provided
+            if region_code:
+                data = [c for c in data if c.get('regionCode') == region_code]
+            # Filter by province if provided
+            if province_code:
+                data = [c for c in data if c.get('provinceCode') == province_code]
+            # Sort by name
+            data.sort(key=lambda x: x['name'])
+            return data
+    except requests.RequestException:
+        pass
     return []
 
 @lru_cache(maxsize=32)
@@ -66,19 +79,22 @@ def get_municipalities(province_code=None):
 def get_barangays(city_code=None, municipality_code=None):
     """Get barangays from the PSGC API, filtered by city or municipality code"""
     url = f"{BASE_URL}/barangays"
-    response = requests.get(url)
-    if response.status_code == 200:
-        data = response.json()
-        # Filter by city or municipality
-        if city_code:
-            data = [b for b in data if b.get('cityCode') == city_code]
-        elif municipality_code:
-            data = [b for b in data if b.get('municipalityCode') == municipality_code]
-        else:
-            return []  # Too many to return without a filter
-        # Sort by name
-        data.sort(key=lambda x: x['name'])
-        return data
+    try:
+        response = requests.get(url, timeout=5)
+        if response.status_code == 200:
+            data = response.json()
+            # Filter by city or municipality
+            if city_code:
+                data = [b for b in data if b.get('cityCode') == city_code]
+            elif municipality_code:
+                data = [b for b in data if b.get('municipalityCode') == municipality_code]
+            else:
+                return []  # Too many to return without a filter
+            # Sort by name
+            data.sort(key=lambda x: x['name'])
+            return data
+    except requests.RequestException:
+        pass
     return []
 
 def get_region_by_code(code):

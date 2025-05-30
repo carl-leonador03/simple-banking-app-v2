@@ -47,6 +47,107 @@ A user-friendly and responsive Flask-based banking application designed for depl
   - API rate limiting to prevent abuse
   - CSRF protection for all forms
 
+## New Features and Improvements
+
+### Enhanced User Management
+- **Advanced Role System**
+  - Hierarchical permissions: Manager > Admin > Regular User
+  - Clear role separation with visual indicators
+  - Role-specific dashboards and interfaces
+
+### Improved Security
+- **Modern Password Handling**
+  - Upgraded from SHA-256 to Bcrypt hashing
+  - Automatic migration of old password hashes
+  - Enhanced password reset functionality
+
+### Transaction System
+- **Enhanced Transfer Process**
+  - Two-step verification for transfers
+  - Detailed confirmation screen
+  - Automatic reference number generation
+  - Transaction status tracking (pending, completed, failed)
+
+### Advanced Admin Features
+- **User Management**
+  - Detailed user profile editing
+  - Address validation with PSGC API
+  - Activity logging for user changes
+  - Bulk user management capabilities
+
+### New Manager Features
+- **System Oversight**
+  - Admin account creation and management
+  - Admin activity monitoring
+  - Transaction audit logs
+  - System-wide transfer monitoring
+
+### Location Management
+- **PSGC Integration Improvements**
+  - Real-time address validation
+  - Hierarchical location selection
+  - Address change tracking
+  - Location data caching
+
+### Security Enhancements
+- **Rate Limiting**
+  - Dynamic rate limiting based on endpoint sensitivity
+  - IP-based throttling
+  - Customizable limit configurations
+  - Rate limit bypass for trusted users
+
+### Audit System
+- **Enhanced Logging**
+  - Detailed transaction logs
+  - Admin action tracking
+  - Login history
+  - Address change history
+
+### Database Improvements
+- **Data Integrity**
+  - Transaction rollback protection
+  - Automated backups
+  - Data validation layers
+  - Foreign key constraints
+
+### User Interface
+- **Enhanced Dashboard**
+  - Role-specific views
+  - Transaction summary cards
+  - Quick action buttons
+  - Status indicators
+
+### Technical Improvements
+- **Code Organization**
+  - Modular structure
+  - Improved error handling
+  - Environment variable management
+  - Comprehensive documentation
+
+### New Environment Variables
+```ini
+SESSION_TIMEOUT=30
+MAX_LOGIN_ATTEMPTS=3
+LOGIN_ATTEMPT_TIMEOUT=300
+```
+
+### Rate Limiting Configuration
+Updated rate limits for different operations:
+- Login: 10 attempts per minute
+- Registration: 5 attempts per minute
+- API Endpoints: 30 requests per minute
+- Admin Operations: Various limits based on operation type
+
+These updates reflect:
+
+The new security features
+Enhanced role management
+Improved transaction handling
+Better audit capabilities
+Updated configuration options
+Technical improvements
+All these changes make the system more robust, secure, and maintainable while providing better user experience across all roles.
+
 ## Getting Started
 
 ### Prerequisites
@@ -273,4 +374,4 @@ If Redis is not available, the application will automatically fall back to in-me
 
 This project is licensed under the MIT License - see the LICENSE file for details.
 
-# Status Origin
+**Developer:** V.J. Ayuban
